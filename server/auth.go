@@ -1,10 +1,16 @@
-package domain
+package main
 
 import (
+	"context"
+	"encoding/gob"
+	"errors"
 	"log"
 	"os"
 
+	"github.com/gorilla/sessions"
+	uuid "github.com/satori/go.uuid"
 	"golang.org/x/oauth2"
+	v2 "google.golang.org/api/oauth2/v2"
 )
 
 type GoogleAuthConfig struct {
@@ -27,6 +33,9 @@ func InitAuthConfig(logger *log.Logger) {
 	}
 	authConfig.AuthorizeEndpoint = "https://accounts.google.com/o/oauth2/v2/auth"
 	authConfig.TokenEndpoint = "https://www.googleapis.com/oauth2/v4/token"
+
+	gob.Register(&UserInfo{})
+
 }
 
 func GetConfig() *oauth2.Config {
@@ -42,4 +51,45 @@ func GetConfig() *oauth2.Config {
 	}
 
 	return config
+}
+
+func AuthMethod(session *sessions.Session) string {
+	state, _ := uuid.NewV4()
+	session.Values["origState"] = state.String()
+
+	config := GetConfig()
+	url := config.AuthCodeURL(state.String())
+
+	return url
+}
+
+func callbackMethod(session *sessions.Session, state string, code string, logger *log.Logger) error {
+	config := GetConfig()
+	context := context.Background()
+	origState := session.Values["origState"].(string)
+
+	if origState != state {
+		return errors.New("invalid state")
+	}
+
+	tok, err := config.Exchange(context, code)
+	if err != nil {
+		logger.Println(err)
+		return err
+	}
+
+	if tok.Valid() == false {
+		return errors.New("invaild token")
+	}
+
+	service, _ := v2.New(config.Client(context, tok))
+
+	// accessToken is used only this time
+	tokenInfo, _ := service.Tokeninfo().AccessToken(tok.AccessToken).Context(context).Do()
+
+	userInfo := &UserInfo{Email: tokenInfo.Email}
+
+	session.Values["userInfo"] = userInfo
+
+	return nil
 }

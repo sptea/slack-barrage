@@ -1,75 +1,92 @@
 package main
 
 import (
-	"context"
-	"crypto/rand"
-	"encoding/base32"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	"github.com/gorilla/sessions"
+	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
-	uuid "github.com/satori/go.uuid"
-	"github.com/sptea/slack-barrage/server/domain"
-	v2 "google.golang.org/api/oauth2/v2"
+	"github.com/sptea/slack-barrage/server/entity"
 )
 
 var listenPort string
 var logger *log.Logger
 var store *sessions.CookieStore
 var session *sessions.Session
+var upgrader = websocket.Upgrader{}
+
+const (
+	sessionName = "sid"
+)
 
 func clientHandler(w http.ResponseWriter, r *http.Request) {
-	domain.ClientHandler(w, r, logger)
+	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Fatal("error upgrading GET request to a websocket::", err)
+		// TODO Fatal is not suitable to here (should return error)
+	}
+	defer conn.Close()
+
+	entity.ClientHandler(conn, logger)
+}
+
+func authFilter(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, _ := store.Get(r, sessionName)
+		logger.Println("kokoInauthFilter")
+		logger.Println(session.Values["userInfo"])
+		logger.Println(session.Values)
+
+		if session.Values["userInfo"] == nil {
+			logger.Println("redirect")
+			http.Redirect(w, r, "/auth", 302)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func testHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "test")
 }
 
 func authHandler(w http.ResponseWriter, r *http.Request) {
-	state, _ := uuid.NewV4()
+	session, _ := store.Get(r, sessionName)
 
-	config := domain.GetConfig()
+	url := AuthMethod(session)
 
-	url := config.AuthCodeURL(state.String())
+	err := session.Save(r, w)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	http.Redirect(w, r, url, 302)
 }
 
 func callbackHandler(w http.ResponseWriter, r *http.Request) {
-	config := domain.GetConfig()
+	session, _ := store.Get(r, sessionName)
 
-	context := context.Background()
-	code := r.FormValue("code")
-
-	tok, err := config.Exchange(context, code)
+	err := callbackMethod(session, r.FormValue("state"), r.FormValue("code"), logger)
 	if err != nil {
-		panic(err)
+		logger.Println(err)
 	}
 
-	if tok.Valid() == false {
-		panic(errors.New("vaild token"))
-	}
-
-	service, _ := v2.New(config.Client(context, tok))
-	tokenInfo, _ := service.Tokeninfo().AccessToken(tok.AccessToken).Context(context).Do()
-
-	session, _ := store.Get(r, "session-name")
-	session.Values["email"] = tokenInfo.Email
-	fmt.Println(tokenInfo.Email)
 	session.Save(r, w)
-
-	json.NewEncoder(w).Encode(tokenInfo)
 }
 
 func init() {
 	logger = log.New(os.Stdout, "[slack-barrage]", log.LstdFlags)
 
+	logger.Println("init")
 	err := godotenv.Load()
 	if err != nil {
 		logger.Panic("Error loading .env file")
@@ -80,18 +97,16 @@ func init() {
 		logger.Panic("Faild to load env: PORT")
 	}
 
-	domain.InitAuthConfig(logger)
+	InitAuthConfig(logger)
 }
 
 func main() {
-	b := make([]byte, 48)
-	_, err := io.ReadFull(rand.Reader, b)
-	if err != nil {
-		panic(err)
+	sessionKey := os.Getenv("SESSION_KEY")
+	if sessionKey == "" {
+		logger.Panic("Faild to load env: SESSION_KEY")
 	}
-	str := strings.TrimRight(base32.StdEncoding.EncodeToString(b), "=")
-	store = sessions.NewCookieStore([]byte(os.Getenv(str)))
-	session = sessions.NewSession(store, "session-name")
+	store = sessions.NewCookieStore([]byte(sessionKey))
+	session = sessions.NewSession(store, sessionName)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -100,13 +115,18 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 
+	r.Get("/", testHandler)
 	r.Get("/auth", authHandler)
 	r.Get("/callback", callbackHandler)
 
 	r.Get("/ws", clientHandler)
 
-	go domain.ReadMessageFromslack(logger)
-	go domain.BroadcastMessagesToClients(logger)
+	r.Route("/admin", func(r chi.Router) {
+		r.Use(authFilter)
+		r.Get("/", testHandler)
+	})
+
+	entity.MessageRoutine(logger)
 
 	logger.Printf("Started to listen: " + listenPort)
 	http.ListenAndServe(":"+listenPort, r)

@@ -1,4 +1,4 @@
-package domain
+package entity
 
 import (
 	"encoding/json"
@@ -12,7 +12,6 @@ import (
 
 var clients = make(map[*websocket.Conn]bool)
 var broadcast = make(chan SlackMessage)
-var upgrader = websocket.Upgrader{}
 
 type slackRtmStartResp struct {
 	Ok  bool   `json:"ok"`
@@ -25,15 +24,19 @@ type SlackMessage struct {
 	Channel string `json:"channel"`
 }
 
-func ClientHandler(w http.ResponseWriter, r *http.Request, logger *log.Logger) {
-	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
+/*
+MessageRoutine
+Cretate goroutine which
+  - Receive message from slack
+  - Broadcast these messages to each clients
+This method must be called at once
+*/
+func MessageRoutine(logger *log.Logger) {
+	go readMessageFromslack(logger)
+	go broadcastMessagesToClients(logger)
+}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Fatal("error upgrading GET request to a websocket::", err)
-	}
-	defer conn.Close()
-
+func ClientHandler(conn *websocket.Conn, logger *log.Logger) {
 	clients[conn] = true
 
 	for {
@@ -50,7 +53,7 @@ func ClientHandler(w http.ResponseWriter, r *http.Request, logger *log.Logger) {
 	}
 }
 
-func ReadMessageFromslack(logger *log.Logger) {
+func readMessageFromslack(logger *log.Logger) {
 
 	startURL := "https://slack.com/api/rtm.start"
 	u, err := url.Parse(startURL)
@@ -107,7 +110,7 @@ func ReadMessageFromslack(logger *log.Logger) {
 	}
 }
 
-func BroadcastMessagesToClients(logger *log.Logger) {
+func broadcastMessagesToClients(logger *log.Logger) {
 	for {
 		message := <-broadcast
 		for client := range clients {
