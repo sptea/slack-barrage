@@ -31,7 +31,7 @@ func clientHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Fatal("error upgrading GET request to a websocket::", err)
-		// TODO Fatal is not suitable to here (should return error)
+		// TODO Fatal is not suitable to here
 	}
 	defer conn.Close()
 
@@ -46,8 +46,8 @@ func authFilter(next http.Handler) http.Handler {
 		logger.Println(session.Values)
 
 		if session.Values["userInfo"] == nil {
-			logger.Println("redirect")
-			http.Redirect(w, r, "/auth", 302)
+			w.WriteHeader(http.StatusUnauthorized)
+			logger.Println("Unauthoried")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -77,7 +77,8 @@ func callbackHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := callbackMethod(session, r.FormValue("state"), r.FormValue("code"), logger)
 	if err != nil {
-		logger.Println(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	session.Save(r, w)

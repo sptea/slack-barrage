@@ -29,16 +29,21 @@ MessageRoutine
 Cretate goroutine which
   - Receive message from slack
   - Broadcast these messages to each clients
-This method must be called at once
+This method must be called once in main method
 */
 func MessageRoutine(logger *log.Logger) {
 	go readMessageFromslack(logger)
 	go broadcastMessagesToClients(logger)
 }
 
+/*
+Called for each connect of client
+*/
 func ClientHandler(conn *websocket.Conn, logger *log.Logger) {
 	clients[conn] = true
 
+	// TODO this loop is needless
+	// should be replaced by waiting channel
 	for {
 		var msg SlackMessage
 
@@ -75,6 +80,7 @@ func readMessageFromslack(logger *log.Logger) {
 	if err != nil {
 		logger.Println(err)
 		return
+		// TODO error handle
 	}
 	defer resp.Body.Close()
 
@@ -82,11 +88,13 @@ func readMessageFromslack(logger *log.Logger) {
 	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
 		logger.Println(err)
 		return
+		// TODO error handle
 	}
 
 	c, _, err := websocket.DefaultDialer.Dial(d.URL, nil)
 	if err != nil {
 		logger.Fatal("dial:", err)
+		// TODO error handle
 	}
 	defer c.Close()
 
@@ -95,12 +103,14 @@ func readMessageFromslack(logger *log.Logger) {
 		if err != nil {
 			logger.Println("read:", err)
 			return
+			// TODO error handle
 		}
 
 		var message = SlackMessage{}
 		if err := json.Unmarshal(messageByte, &message); err != nil {
 			logger.Println("JSON Unmarshal error:", err)
 			return
+			// TODO error handle
 		}
 		logger.Println(message)
 

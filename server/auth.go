@@ -34,6 +34,7 @@ func InitAuthConfig(logger *log.Logger) {
 	authConfig.AuthorizeEndpoint = "https://accounts.google.com/o/oauth2/v2/auth"
 	authConfig.TokenEndpoint = "https://www.googleapis.com/oauth2/v4/token"
 
+	// Register UserInfo to use it on session
 	gob.Register(&UserInfo{})
 
 }
@@ -69,7 +70,7 @@ func callbackMethod(session *sessions.Session, state string, code string, logger
 	origState := session.Values["origState"].(string)
 
 	if origState != state {
-		return errors.New("invalid state")
+		return errors.New("callbackMethod: invalid state")
 	}
 
 	tok, err := config.Exchange(context, code)
@@ -79,7 +80,7 @@ func callbackMethod(session *sessions.Session, state string, code string, logger
 	}
 
 	if tok.Valid() == false {
-		return errors.New("invaild token")
+		return errors.New("callbackMethod: invaild token")
 	}
 
 	service, _ := v2.New(config.Client(context, tok))
