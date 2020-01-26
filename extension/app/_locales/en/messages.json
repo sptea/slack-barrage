@@ -1,0 +1,18 @@
+{
+  "appName": {
+    "message": "slack-barrage",
+    "description": ""
+  },
+  "appShortName": {
+    "message": "slack-barrage",
+    "description": ""
+  },
+  "appDescription": {
+    "message": "Chrome extension of slack-barrage",
+    "description": ""
+  },
+  "browserActionTitle": {
+    "message": "slack-barrage",
+    "description": ""
+  }
+}
